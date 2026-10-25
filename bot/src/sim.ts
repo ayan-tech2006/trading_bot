@@ -1,5 +1,5 @@
 // Historical download + trade simulation, shared by backtest.ts and tune.ts.
-import { klines } from './binance.js';
+import { klines, type Kline } from './binance.js';
 import { outcome, type Candle, type Signal } from './strategy.js';
 
 export const FEE = 0.001; // 0.1% per side
@@ -13,8 +13,8 @@ export const netPnl = (side: 'BUY' | 'SELL', entry: number, exit: number) =>
 export type Trade ={ entryTime: number; exitTime: number; result: 'win' | 'loss'; pnl: number };
 
 /** All closed candles from startTime until now. */
-export async function history(pair: string, timeframe: string, startTime: number): Promise<Candle[]> {
-  const all: Candle[] = [];
+export async function history(pair: string, timeframe: string, startTime: number): Promise<Kline[]> {
+  const all: Kline[] = [];
   for (let start = startTime; ; ) {
     const rows = await klines(pair, timeframe, start);
     all.push(...rows.filter((c) => c.closeTime < Date.now()));

@@ -2,7 +2,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
-import { klines } from './binance.js';
+import { klines, openInterest } from './binance.js';
 import { netPnl } from './sim.js';
 import { findSignals, outcome, type Candle, type Options } from './strategy.js';
 
@@ -140,7 +140,23 @@ async function resolve(s: OpenSignal) {
   }
 }
 
+// Open interest snapshot once per 15-minute slot, for testing an OI filter later on real forward data.
+// Binance only keeps ~30 days of OI history, so we record our own. Not used by any strategy.
+const OI_SLOT = 15 * 60_000;
+let lastOiSlot = 0;
+async function logOpenInterest() {
+  const slot = Math.floor(Date.now() / OI_SLOT) * OI_SLOT;
+  if (slot === lastOiSlot) return;
+  const oi = await openInterest(PAIR);
+  const { error } = await db
+    .from('oi_snapshots')
+    .upsert({ pair: PAIR, open_interest: oi.openInterest, ts: new Date(slot).toISOString() }, { onConflict: 'pair,ts', ignoreDuplicates: true });
+  if (error) return logError('oi snapshot', error.message); // retried next minute
+  lastOiSlot = slot;
+}
+
 async function trackOutcomes() {
+  logOpenInterest().catch((e) => logError('oi snapshot', e));
   const { error: hbError } = await db.from('bot_status').upsert({ id: 1, last_heartbeat: new Date().toISOString() });
   if (hbError) logError('heartbeat', hbError.message);
 

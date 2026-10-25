@@ -7,6 +7,7 @@
     "backtest": "tsx src/backtest.ts",
     "tune": "tsx src/tune.ts",
     "validate": "tsx src/validate.ts",
+    "prereg": "tsx src/prereg.ts",
     "test": "tsx src/strategy.test.ts",
     "typecheck": "tsc --noEmit"
   },

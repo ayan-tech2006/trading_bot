@@ -36,6 +36,18 @@ create table if not exists bot_status (
   last_heartbeat timestamptz
 );
 
+-- BTCUSDT open interest every 15 min (forward data for a future OI filter; Binance keeps only ~30 days)
+create table if not exists oi_snapshots (
+  id bigint generated always as identity primary key,
+  pair text not null,
+  open_interest double precision not null, -- contracts = base asset units (BTC)
+  ts timestamptz not null, -- start of the 15-minute slot
+  unique (pair, ts)
+);
+alter table oi_snapshots enable row level security;
+drop policy if exists "anon read oi_snapshots" on oi_snapshots;
+create policy "anon read oi_snapshots" on oi_snapshots for select to anon using (true);
+
 -- Anon key (web dashboard) can only read. The bot uses the service role key, which bypasses RLS.
 alter table signals enable row level security;
 alter table bot_status enable row level security;

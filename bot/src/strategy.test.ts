@@ -1,6 +1,32 @@
 // Self-check for the strategy rules. Run: npm test
 import assert from 'node:assert/strict';
 import { findSignals, outcome, type Candle } from './strategy.js';
+import { fundingOk, takerOk, volumeOk } from './filters.js';
+import type { Kline } from './binance.js';
+
+// ---- filters ----
+const k = (volume: number, takerBuyVolume = volume / 2): Kline => ({ openTime: 0, closeTime: 0, high: 1, low: 1, close: 1, volume, takerBuyVolume });
+const vols = [...Array(20).fill(k(10)), k(15), k(20)];
+assert.equal(volumeOk(vols, 20, 1.5), true); // 15 >= 1.5 x 10
+assert.equal(volumeOk(vols, 20, 2), false);
+assert.equal(volumeOk(vols, 19, 1.5), false, 'needs 20 earlier candles');
+assert.equal(takerOk(k(100, 55), 'BUY'), true);
+assert.equal(takerOk(k(100, 54), 'BUY'), false);
+assert.equal(takerOk(k(100, 45), 'SELL'), true);
+assert.equal(takerOk(k(100, 46), 'SELL'), false);
+// funding every 8h; rates 1..100 over ~33 days, so the latest (100) is the top value
+const H8 = 8 * 60 * 60_000;
+const fund = [...Array(100)].map((_, i) => ({ time: i * H8, rate: i + 1 }));
+assert.equal(fundingOk(fund, 99 * H8, 'BUY'), false, 'top 10% → skip BUY');
+assert.equal(fundingOk(fund, 99 * H8, 'SELL'), true);
+assert.equal(fundingOk(fund, 99 * H8 - 1, 'BUY'), false, 'uses value 99, known before t; still top 10%');
+assert.equal(fundingOk(fund, 50 * H8, 'BUY'), false, 'future values (52..100) ignored: 51 is the max so far');
+const falling = [...Array(100)].map((_, i) => ({ time: i * H8, rate: 100 - i }));
+assert.equal(fundingOk(falling, 99 * H8, 'SELL'), false, 'bottom 10% → skip SELL');
+assert.equal(fundingOk(falling, 99 * H8, 'BUY'), true);
+// 90-day window: 30 old huge values (> 90 days back) must be ignored, then 270 rising values
+const windowed = [...Array(300)].map((_, i) => ({ time: i * H8, rate: i < 30 ? 1000 : i }));
+assert.equal(fundingOk(windowed, 299 * H8, 'BUY'), false, 'old values outside 90 days are not counted');
 
 // 60 candles falling, then 60 rising: the 9 EMA must cross above the 21 EMA once → one BUY
 const prices = [...Array(60)].map((_, i) => 100 - i * 0.5).concat([...Array(60)].map((_, i) => 70 + i * 0.5));
