@@ -2,6 +2,7 @@
 
 create table if not exists signals (
   id bigint generated always as identity primary key,
+  strategy text, -- e.g. cross_15m, breakout_4h
   pair text not null,
   timeframe text not null,
   candle_open_time timestamptz not null,
@@ -22,8 +23,10 @@ create table if not exists signals (
   unique (pair, timeframe, candle_open_time)
 );
 
--- for projects created before net_pnl_pct existed
+-- for projects created before these columns existed
 alter table signals add column if not exists net_pnl_pct double precision;
+alter table signals add column if not exists strategy text; -- e.g. cross_15m, breakout_4h
+update signals set strategy = 'cross_15m' where strategy is null; -- rows from before the column, all from the 15m bot
 
 create index if not exists signals_open_idx on signals (status) where status = 'open';
 

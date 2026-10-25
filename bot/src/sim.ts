@@ -63,6 +63,10 @@ export function stats(trades: Trade[]) {
     avgLoss: avg(losses),
     total,
     maxDd,
+    // gross net profit / gross net loss (after costs, so a TP hit smaller than costs counts as a loss)
+    profitFactor:
+      trades.filter((t) => t.pnl > 0).reduce((a, t) => a + t.pnl, 0) /
+      -trades.filter((t) => t.pnl < 0).reduce((a, t) => a + t.pnl, 0),
   };
 }
 

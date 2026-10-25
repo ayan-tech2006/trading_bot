@@ -4,12 +4,19 @@ import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { klines } from './binance.js';
 import { netPnl } from './sim.js';
-import { findSignals, outcome, type Candle } from './strategy.js';
+import { findSignals, outcome, type Candle, type Options } from './strategy.js';
 
 const PAIR = process.env.PAIR ?? 'BTCUSDT';
-const TIMEFRAME = '15m';
-const HISTORY = 500; // enough candles for the EMAs to settle
+const HISTORY = 500; // enough candles for the indicators to settle (breakout needs 100, ADX ~30)
 const WS_URL = process.env.BINANCE_WS ?? 'wss://stream.binance.com:9443/ws';
+
+// Each live strategy gets its own candle stream. Settings are fixed; don't tune them after seeing live results.
+const STRATEGIES: { name: string; timeframe: '15m' | '4h'; opts: Options; candles: Candle[] }[] = [
+  { name: 'cross_15m', timeframe: '15m', opts: {}, candles: [] }, // original EMA 9/21 rules
+  { name: 'breakout_4h', timeframe: '4h', opts: { strategy: 'breakout', param: 100, adxMin: 25, slAtr: 1.5, tpAtr: 2 }, candles: [] },
+];
+type Strategy = (typeof STRATEGIES)[number];
+const TF_MS: Record<string, number> = { '15m': 15 * 60_000, '4h': 4 * 60 * 60_000 };
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in bot/.env');
@@ -35,18 +42,17 @@ async function notify(text: string) {
   }
 }
 
-let candles: Candle[] = [];
-
 /** Run the strategy on the newest closed candle and save a signal if it fires there. */
-async function evaluateLatest() {
-  const last = candles.at(-1);
-  const signal = findSignals(candles).at(-1);
+async function evaluateLatest(st: Strategy) {
+  const last = st.candles.at(-1);
+  const signal = findSignals(st.candles, st.opts).at(-1);
   if (!last || !signal || signal.openTime !== last.openTime) return;
 
   const { data, error } = await db.from('signals').upsert(
     {
+      strategy: st.name,
       pair: PAIR,
-      timeframe: TIMEFRAME,
+      timeframe: st.timeframe,
       candle_open_time: new Date(signal.openTime).toISOString(),
       side: signal.side,
       entry: signal.entry,
@@ -58,51 +64,53 @@ async function evaluateLatest() {
     },
     { onConflict: 'pair,timeframe,candle_open_time', ignoreDuplicates: true },
   ).select('id');
-  if (error) return logError('insert signal', error.message);
+  if (error) return logError('insert signal', st.name, error.message);
   if (!data.length) return; // already saved (e.g. reconnect within the same candle): don't alert twice
 
-  log(`SIGNAL #${data[0].id} ${signal.side} ${PAIR} entry=${signal.entry} sl=${signal.sl.toFixed(2)} tp=${signal.tp.toFixed(2)}`);
+  log(`SIGNAL #${data[0].id} ${st.name} ${signal.side} ${PAIR} entry=${signal.entry} sl=${signal.sl.toFixed(2)} tp=${signal.tp.toFixed(2)}`);
   await notify(
-    `${signal.side === 'BUY' ? '📈' : '📉'} ${signal.side} ${PAIR} ${TIMEFRAME}  #${data[0].id}\n` +
+    `${signal.side === 'BUY' ? '📈' : '📉'} ${signal.side} ${PAIR}  [${st.name}]  #${data[0].id}\n` +
       `Entry: ${fmt(signal.entry)}\nSL: ${fmt(signal.sl)}\nTP: ${fmt(signal.tp)}\n(paper signal, not advice)`,
   );
 }
 
 /** (Re)load history from REST. Called on every (re)connect so gaps while offline are filled. */
-async function loadHistory() {
-  const rows = await klines(PAIR, TIMEFRAME, undefined, HISTORY + 1);
-  candles = rows.filter((c) => c.closeTime < Date.now()); // drop the still-forming candle
-  log(`loaded ${candles.length} closed ${TIMEFRAME} candles`);
-  await evaluateLatest();
+async function loadHistory(st: Strategy) {
+  const rows = await klines(PAIR, st.timeframe, undefined, HISTORY + 1);
+  st.candles = rows.filter((c) => c.closeTime < Date.now()); // drop the still-forming candle
+  log(`${st.name}: loaded ${st.candles.length} closed ${st.timeframe} candles`);
+  await evaluateLatest(st);
 }
 
-function connect() {
-  const ws = new WebSocket(`${WS_URL}/${PAIR.toLowerCase()}@kline_${TIMEFRAME}`);
+function connect(st: Strategy) {
+  const ws = new WebSocket(`${WS_URL}/${PAIR.toLowerCase()}@kline_${st.timeframe}`);
 
   ws.on('open', () => {
-    log('websocket connected');
-    loadHistory().catch((e) => logError('load history', e));
+    log(`${st.name}: websocket connected`);
+    loadHistory(st).catch((e) => logError('load history', st.name, e));
   });
 
   ws.on('message', (raw) => {
     const k = JSON.parse(raw.toString()).k;
     if (!k?.x) return; // only act when the candle CLOSES
     const c: Candle = { openTime: k.t, high: Number(k.h), low: Number(k.l), close: Number(k.c) };
-    if (candles.at(-1)?.openTime === c.openTime) return;
-    candles = [...candles, c].slice(-HISTORY);
-    evaluateLatest().catch((e) => logError('evaluate', e));
+    if (st.candles.at(-1)?.openTime === c.openTime) return;
+    st.candles = [...st.candles, c].slice(-HISTORY);
+    evaluateLatest(st).catch((e) => logError('evaluate', st.name, e));
   });
 
-  ws.on('error', (e) => logError('websocket', e.message));
+  ws.on('error', (e) => logError('websocket', st.name, e.message));
   ws.on('close', () => {
-    log('websocket closed, reconnecting in 5s');
-    setTimeout(connect, 5000);
+    log(`${st.name}: websocket closed, reconnecting in 5s`);
+    setTimeout(() => connect(st), 5000);
   });
 }
 
+type OpenSignal = { id: number; strategy: string | null; timeframe: string; side: 'BUY' | 'SELL'; entry: number; sl: number; tp: number; candle_open_time: string };
+
 /** Walk 1m candles since the signal's entry; the first SL/TP touch decides it. */
-async function resolve(s: { id: number; side: 'BUY' | 'SELL'; entry: number; sl: number; tp: number; candle_open_time: string }) {
-  let start = new Date(s.candle_open_time).getTime() + 15 * 60_000; // entry = close of the signal candle
+async function resolve(s: OpenSignal) {
+  let start = new Date(s.candle_open_time).getTime() + TF_MS[s.timeframe]; // entry = close of the signal candle
   for (;;) {
     const rows = await klines(PAIR, '1m', start);
     for (const c of rows) {
@@ -119,9 +127,9 @@ async function resolve(s: { id: number; side: 'BUY' | 'SELL'; entry: number; sl:
       if (error) return logError('close signal', error.message);
       if (!data.length) return;
 
-      log(`CLOSED #${s.id} ${result.toUpperCase()} net ${net.toFixed(2)}%`);
+      log(`CLOSED #${s.id} ${s.strategy} ${result.toUpperCase()} net ${net.toFixed(2)}%`);
       await notify(
-        `${result === 'win' ? '✅ WIN' : '❌ LOSS'}  #${s.id} ${s.side} ${PAIR}\n` +
+        `${result === 'win' ? '✅ WIN' : '❌ LOSS'}  #${s.id} ${s.side} ${PAIR}  [${s.strategy}]\n` +
           `Entry: ${fmt(s.entry)} → ${result === 'win' ? 'TP' : 'SL'} ${fmt(closePrice)}\n` +
           `Net: ${net >= 0 ? '+' : ''}${net.toFixed(2)}% after fees`,
       );
@@ -136,12 +144,16 @@ async function trackOutcomes() {
   const { error: hbError } = await db.from('bot_status').upsert({ id: 1, last_heartbeat: new Date().toISOString() });
   if (hbError) logError('heartbeat', hbError.message);
 
-  const { data, error } = await db.from('signals').select('id, side, entry, sl, tp, candle_open_time').eq('status', 'open').eq('pair', PAIR);
+  const { data, error } = await db
+    .from('signals')
+    .select('id, strategy, timeframe, side, entry, sl, tp, candle_open_time')
+    .eq('status', 'open')
+    .eq('pair', PAIR);
   if (error) return logError('load open signals', error.message);
   for (const s of data) await resolve(s);
 }
 
-log(`starting ${PAIR} ${TIMEFRAME} paper bot (no trading)`);
-connect();
+log(`starting ${PAIR} paper bot (no trading): ${STRATEGIES.map((s) => s.name).join(', ')}`);
+for (const st of STRATEGIES) connect(st);
 trackOutcomes().catch((e) => logError('tracker', e));
 setInterval(() => trackOutcomes().catch((e) => logError('tracker', e)), 60_000);
