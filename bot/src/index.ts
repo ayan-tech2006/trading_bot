@@ -16,6 +16,23 @@ const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persi
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 const logError = (...a: unknown[]) => console.error(new Date().toISOString(), 'ERROR', ...a);
+const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+/** Telegram alert. Skipped when not configured; never throws, so a Telegram outage can't stop the bot. */
+async function notify(text: string) {
+  const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = process.env;
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text }),
+    });
+    if (!res.ok) logError('telegram', res.status, await res.text());
+  } catch (e) {
+    logError('telegram', e);
+  }
+}
 
 let candles: Candle[] = [];
 
@@ -25,7 +42,7 @@ async function evaluateLatest() {
   const signal = findSignals(candles).at(-1);
   if (!last || !signal || signal.openTime !== last.openTime) return;
 
-  const { error } = await db.from('signals').upsert(
+  const { data, error } = await db.from('signals').upsert(
     {
       pair: PAIR,
       timeframe: TIMEFRAME,
@@ -39,9 +56,15 @@ async function evaluateLatest() {
       ema_slow: signal.emaSlow,
     },
     { onConflict: 'pair,timeframe,candle_open_time', ignoreDuplicates: true },
+  ).select('id');
+  if (error) return logError('insert signal', error.message);
+  if (!data.length) return; // already saved (e.g. reconnect within the same candle): don't alert twice
+
+  log(`SIGNAL #${data[0].id} ${signal.side} ${PAIR} entry=${signal.entry} sl=${signal.sl.toFixed(2)} tp=${signal.tp.toFixed(2)}`);
+  await notify(
+    `${signal.side === 'BUY' ? '📈' : '📉'} ${signal.side} ${PAIR} ${TIMEFRAME}  #${data[0].id}\n` +
+      `Entry: ${fmt(signal.entry)}\nSL: ${fmt(signal.sl)}\nTP: ${fmt(signal.tp)}\n(paper signal, not advice)`,
   );
-  if (error) logError('insert signal', error.message);
-  else log(`SIGNAL ${signal.side} ${PAIR} entry=${signal.entry} sl=${signal.sl.toFixed(2)} tp=${signal.tp.toFixed(2)}`);
 }
 
 /** (Re)load history from REST. Called on every (re)connect so gaps while offline are filled. */
@@ -77,19 +100,29 @@ function connect() {
 }
 
 /** Walk 1m candles since the signal's entry; the first SL/TP touch decides it. */
-async function resolve(s: { id: number; side: 'BUY' | 'SELL'; sl: number; tp: number; candle_open_time: string }) {
+async function resolve(s: { id: number; side: 'BUY' | 'SELL'; entry: number; sl: number; tp: number; candle_open_time: string }) {
   let start = new Date(s.candle_open_time).getTime() + 15 * 60_000; // entry = close of the signal candle
   for (;;) {
     const rows = await klines(PAIR, '1m', start);
     for (const c of rows) {
       const result = outcome(s, c.high, c.low);
       if (!result) continue;
-      const { error } = await db
+      const closePrice = result === 'win' ? s.tp : s.sl;
+      const { data, error } = await db
         .from('signals')
-        .update({ status: result, closed_at: new Date(c.openTime).toISOString(), close_price: result === 'win' ? s.tp : s.sl })
-        .eq('id', s.id);
-      if (error) logError('close signal', error.message);
-      else log(`CLOSED #${s.id} ${result.toUpperCase()}`);
+        .update({ status: result, closed_at: new Date(c.openTime).toISOString(), close_price: closePrice })
+        .eq('id', s.id)
+        .eq('status', 'open') // only the first close counts, so the alert is sent once
+        .select('id');
+      if (error) return logError('close signal', error.message);
+      if (!data.length) return;
+
+      const move = (((closePrice - s.entry) / s.entry) * (s.side === 'BUY' ? 100 : -100)).toFixed(2);
+      log(`CLOSED #${s.id} ${result.toUpperCase()}`);
+      await notify(
+        `${result === 'win' ? '✅ WIN' : '❌ LOSS'}  #${s.id} ${s.side} ${PAIR}\n` +
+          `Entry: ${fmt(s.entry)} → ${result === 'win' ? 'TP' : 'SL'} ${fmt(closePrice)} (${move}%, before fees)`,
+      );
       return;
     }
     if (rows.length < 1000) return; // reached the present, still open
@@ -101,7 +134,7 @@ async function trackOutcomes() {
   const { error: hbError } = await db.from('bot_status').upsert({ id: 1, last_heartbeat: new Date().toISOString() });
   if (hbError) logError('heartbeat', hbError.message);
 
-  const { data, error } = await db.from('signals').select('id, side, sl, tp, candle_open_time').eq('status', 'open').eq('pair', PAIR);
+  const { data, error } = await db.from('signals').select('id, side, entry, sl, tp, candle_open_time').eq('status', 'open').eq('pair', PAIR);
   if (error) return logError('load open signals', error.message);
   for (const s of data) await resolve(s);
 }

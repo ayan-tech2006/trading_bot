@@ -30,6 +30,16 @@ Strategy (`bot/src/strategy.ts`, shared by live bot and backtest):
    ```
    Deploy to Vercel: set the same two env vars there.
 
+## Telegram alerts (optional)
+
+The bot messages you when a signal is created and when it closes as win/loss.
+
+1. In Telegram open **@BotFather** → `/newbot` → pick a name and a username ending in `bot`. It replies with a token like `123456789:AA...`.
+2. Put it in `bot/.env` as `TELEGRAM_BOT_TOKEN=...`.
+3. Open your new bot in Telegram and press **Start** (or send it any message).
+4. Open `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser and copy `"chat":{"id":...}` into `TELEGRAM_CHAT_ID=...`.
+5. Restart the bot (`npm start`).
+
 ## How it works
 
 - `bot/src/index.ts` loads 500 candles over REST, then listens to the Binance kline WebSocket. When a 15m candle closes it runs the strategy; a signal on that candle is inserted (duplicate candles are ignored by a unique constraint). It reconnects after 5s if the socket drops and reloads history on every reconnect.
