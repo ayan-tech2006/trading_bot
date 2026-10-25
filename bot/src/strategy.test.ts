@@ -32,6 +32,10 @@ const pb = findSignals(candles, { strategy: 'pullback', param: 40 }).filter((s) 
 assert.ok(pb.length >= 1);
 assert.equal(findSignals(candles, { strategy: 'pullback', param: 40, trendEma: 50 }).filter((s) => s.side === 'BUY').length, 0);
 
+// ADX filter: the V-bottom BUY happens in a strong move (ADX high), so adx>=20 keeps it; ADX can't exceed 100
+assert.equal(findSignals(candles, { adxMin: 20 }).filter((s) => s.side === 'BUY').length, 1);
+assert.equal(findSignals(candles, { adxMin: 101 }).length, 0);
+
 const buy = { side: 'BUY' as const, sl: 90, tp: 120 };
 const sell = { side: 'SELL' as const, sl: 110, tp: 80 };
 assert.equal(outcome(buy, 100, 95), null);

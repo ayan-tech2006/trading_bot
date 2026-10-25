@@ -6,7 +6,11 @@ export const FEE = 0.001; // 0.1% per side
 export const SLIPPAGE = 0.0005; // 0.05% per side
 export const COST = 2 * (FEE + SLIPPAGE); // round trip, as a fraction of entry
 
-export type Trade = { entryTime: number; exitTime: number; result: 'win' | 'loss'; pnl: number };
+/** Net return of one trade as a fraction (0.01 = +1%), after fees and slippage. Used by backtests and the live bot. */
+export const netPnl = (side: 'BUY' | 'SELL', entry: number, exit: number) =>
+  ((side === 'BUY' ? 1 : -1) * (exit - entry)) / entry - COST;
+
+export type Trade ={ entryTime: number; exitTime: number; result: 'win' | 'loss'; pnl: number };
 
 /** All closed candles from startTime until now. */
 export async function history(pair: string, timeframe: string, startTime: number): Promise<Candle[]> {
@@ -30,8 +34,7 @@ export function simulate(candles: Candle[], signals: Signal[]): { trades: Trade[
       const result = outcome(s, candles[i].high, candles[i].low);
       if (!result) continue;
       const exit = result === 'win' ? s.tp : s.sl;
-      const dir = s.side === 'BUY' ? 1 : -1;
-      trades.push({ entryTime: s.openTime, exitTime: candles[i].openTime, result, pnl: (dir * (exit - s.entry)) / s.entry - COST });
+      trades.push({ entryTime: s.openTime, exitTime: candles[i].openTime, result, pnl: netPnl(s.side, s.entry, exit) });
       closed = true;
     }
     if (!closed) stillOpen++;

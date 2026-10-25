@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { klines } from './binance.js';
+import { netPnl } from './sim.js';
 import { findSignals, outcome, type Candle } from './strategy.js';
 
 const PAIR = process.env.PAIR ?? 'BTCUSDT';
@@ -108,20 +109,21 @@ async function resolve(s: { id: number; side: 'BUY' | 'SELL'; entry: number; sl:
       const result = outcome(s, c.high, c.low);
       if (!result) continue;
       const closePrice = result === 'win' ? s.tp : s.sl;
+      const net = netPnl(s.side, s.entry, closePrice) * 100;
       const { data, error } = await db
         .from('signals')
-        .update({ status: result, closed_at: new Date(c.openTime).toISOString(), close_price: closePrice })
+        .update({ status: result, closed_at: new Date(c.openTime).toISOString(), close_price: closePrice, net_pnl_pct: net })
         .eq('id', s.id)
         .eq('status', 'open') // only the first close counts, so the alert is sent once
         .select('id');
       if (error) return logError('close signal', error.message);
       if (!data.length) return;
 
-      const move = (((closePrice - s.entry) / s.entry) * (s.side === 'BUY' ? 100 : -100)).toFixed(2);
-      log(`CLOSED #${s.id} ${result.toUpperCase()}`);
+      log(`CLOSED #${s.id} ${result.toUpperCase()} net ${net.toFixed(2)}%`);
       await notify(
         `${result === 'win' ? '✅ WIN' : '❌ LOSS'}  #${s.id} ${s.side} ${PAIR}\n` +
-          `Entry: ${fmt(s.entry)} → ${result === 'win' ? 'TP' : 'SL'} ${fmt(closePrice)} (${move}%, before fees)`,
+          `Entry: ${fmt(s.entry)} → ${result === 'win' ? 'TP' : 'SL'} ${fmt(closePrice)}\n` +
+          `Net: ${net >= 0 ? '+' : ''}${net.toFixed(2)}% after fees`,
       );
       return;
     }

@@ -1,5 +1,5 @@
 // Shared by the live bot and the backtest, so both run exactly the same rules.
-import { ATR, BollingerBands, EMA, RSI } from 'technicalindicators';
+import { ADX, ATR, BollingerBands, EMA, RSI } from 'technicalindicators';
 
 export type Candle = { openTime: number; high: number; low: number; close: number };
 export type Side = 'BUY' | 'SELL';
@@ -26,6 +26,8 @@ export type Options = {
   param?: number;
   /** Only BUY above this EMA and only SELL below it (e.g. 200). Off when not given. */
   trendEma?: number;
+  /** Skip signals while ADX(14) is below this (sideways market), e.g. 20 or 25. Off when not given. */
+  adxMin?: number;
   slAtr?: number;
   tpAtr?: number;
 };
@@ -70,17 +72,17 @@ const RULE_FNS: Record<StrategyName, (ind: Ind, p: number) => (i: number) => Sid
 
 /** Every signal in the series. Candles must be closed and in time order. Defaults = the live bot's rules. */
 export function findSignals(candles: Candle[], opts: Options = {}): Signal[] {
-  const { strategy = 'cross', trendEma, slAtr = RULES.slAtr, tpAtr = RULES.tpAtr } = opts;
+  const { strategy = 'cross', trendEma, adxMin, slAtr = RULES.slAtr, tpAtr = RULES.tpAtr } = opts;
   const n = candles.length;
   const close = candles.map((c) => c.close);
+  const high = candles.map((c) => c.high);
+  const low = candles.map((c) => c.low);
   const fast = pad(EMA.calculate({ period: RULES.emaFast, values: close }), n);
   const slow = pad(EMA.calculate({ period: RULES.emaSlow, values: close }), n);
   const trend = trendEma ? pad(EMA.calculate({ period: trendEma, values: close }), n) : null;
   const rsi = pad(RSI.calculate({ period: RULES.rsi, values: close }), n);
-  const atr = pad(
-    ATR.calculate({ period: RULES.atr, high: candles.map((c) => c.high), low: candles.map((c) => c.low), close }),
-    n,
-  );
+  const atr = pad(ATR.calculate({ period: RULES.atr, high, low, close }), n);
+  const adx = adxMin ? pad(ADX.calculate({ period: 14, high, low, close }).map((a) => a.adx), n) : null;
   const rule = RULE_FNS[strategy]({ candles, close, fast, slow, rsi }, opts.param ?? DEFAULT_PARAM[strategy]);
 
   const out: Signal[] = [];
@@ -88,6 +90,7 @@ export function findSignals(candles: Candle[], opts: Options = {}): Signal[] {
     if (Number.isNaN(atr[i])) continue;
     const side = rule(i);
     if (!side || (trend && !(side === 'BUY' ? close[i] > trend[i] : close[i] < trend[i]))) continue;
+    if (adx && !(adx[i] >= adxMin!)) continue; // NaN during warm-up also skips
 
     const entry = close[i];
     const dir = side === 'BUY' ? 1 : -1;

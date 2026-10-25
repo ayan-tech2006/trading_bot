@@ -17,9 +17,13 @@ create table if not exists signals (
   created_at timestamptz not null default now(),
   closed_at timestamptz,
   close_price double precision,
+  net_pnl_pct double precision, -- % after 0.1% fee + 0.05% slippage per side, set on close
   -- one signal per candle, so bot restarts can't create duplicates
   unique (pair, timeframe, candle_open_time)
 );
+
+-- for projects created before net_pnl_pct existed
+alter table signals add column if not exists net_pnl_pct double precision;
 
 create index if not exists signals_open_idx on signals (status) where status = 'open';
 
