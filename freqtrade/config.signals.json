@@ -1,0 +1,40 @@
+{
+  "max_open_trades": 3,
+  "stake_currency": "USDT",
+  "stake_amount": 100,
+  "tradable_balance_ratio": 0.99,
+  "fiat_display_currency": "USD",
+  "dry_run": true,
+  "dry_run_wallet": 1000,
+  "cancel_open_orders_on_exit": false,
+  "trading_mode": "spot",
+  "unfilledtimeout": { "entry": 10, "exit": 10, "unit": "minutes" },
+  "entry_pricing": { "price_side": "other", "use_order_book": false },
+  "exit_pricing": { "price_side": "other", "use_order_book": false },
+  "exchange": {
+    "name": "binance",
+    "key": "",
+    "secret": "",
+    "ccxt_config": {},
+    "pair_whitelist": ["BTC/USDT"],
+    "pair_blacklist": []
+  },
+  "pairlists": [{ "method": "StaticPairList" }],
+  "strategy": "SignalCompare",
+  "timeframe": "1h",
+  "telegram": {
+    "enabled": true,
+    "token": "",
+    "chat_id": "",
+    "notification_settings": {
+      "entry": "on",
+      "entry_fill": "on",
+      "exit_fill": "on",
+      "status": "silent",
+      "warning": "on"
+    }
+  },
+  "bot_name": "freqtrade-signal-compare",
+  "initial_state": "running",
+  "internals": { "process_throttle_secs": 5 }
+}

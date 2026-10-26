@@ -16,7 +16,7 @@ const usedTestStart = now - 730 * DAY; // old holdout year: [usedTestStart, trai
 const testStart = now - 1460 * DAY; // fresh test: [testStart, usedTestStart)
 
 type Grid = { param: number[]; trendEma: (number | undefined)[] };
-const GRID: Record<StrategyName, Grid> = {
+const GRID: Partial<Record<StrategyName, Grid>> = { // rsi30 is a fixed mirror of SignalCompare.py, never tuned
   cross: { param: [0], trendEma: [undefined, 200] },
   pullback: { param: [30, 35, 40, 45], trendEma: [200] },
   breakout: { param: [20, 50, 100], trendEma: [undefined, 200] },

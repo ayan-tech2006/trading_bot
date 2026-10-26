@@ -26,7 +26,8 @@ create table if not exists signals (
 -- for projects created before these columns existed
 alter table signals add column if not exists net_pnl_pct double precision;
 alter table signals add column if not exists strategy text; -- e.g. cross_15m, breakout_4h
-update signals set strategy = 'cross_15m' where strategy is null; -- rows from before the column, all from the 15m bot
+update signals set strategy = 'cross_15m' where strategy is null;
+alter table signals add column if not exists confidence text; -- rsi30_1h only: High / Medium / Low -- rows from before the column, all from the 15m bot
 
 create index if not exists signals_open_idx on signals (status) where status = 'open';
 

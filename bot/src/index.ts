@@ -11,12 +11,14 @@ const HISTORY = 500; // enough candles for the indicators to settle (breakout ne
 const WS_URL = process.env.BINANCE_WS ?? 'wss://stream.binance.com:9443/ws';
 
 // Each live strategy gets its own candle stream. Settings are fixed; don't tune them after seeing live results.
-const STRATEGIES: { name: string; timeframe: '15m' | '4h'; opts: Options; candles: Candle[] }[] = [
+const STRATEGIES: { name: string; timeframe: '15m' | '1h' | '4h'; opts: Options; candles: Candle[] }[] = [
   { name: 'cross_15m', timeframe: '15m', opts: {}, candles: [] }, // original EMA 9/21 rules
   { name: 'breakout_4h', timeframe: '4h', opts: { strategy: 'breakout', param: 100, adxMin: 25, slAtr: 1.5, tpAtr: 2 }, candles: [] },
+  // same rules as freqtrade/strategies/SignalCompare.py, to cross-check against Freqtrade's dry-run
+  { name: 'rsi30_1h', timeframe: '1h', opts: { strategy: 'rsi30', slAtr: 1.5, tpAtr: 3 }, candles: [] },
 ];
 type Strategy = (typeof STRATEGIES)[number];
-const TF_MS: Record<string, number> = { '15m': 15 * 60_000, '4h': 4 * 60 * 60_000 };
+const TF_MS: Record<string, number> = { '15m': 15 * 60_000, '1h': 60 * 60_000, '4h': 4 * 60 * 60_000 };
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in bot/.env');
@@ -61,6 +63,7 @@ async function evaluateLatest(st: Strategy) {
       rsi: signal.rsi,
       ema_fast: signal.emaFast,
       ema_slow: signal.emaSlow,
+      confidence: signal.confidence ?? null,
     },
     { onConflict: 'pair,timeframe,candle_open_time', ignoreDuplicates: true },
   ).select('id');
@@ -69,7 +72,7 @@ async function evaluateLatest(st: Strategy) {
 
   log(`SIGNAL #${data[0].id} ${st.name} ${signal.side} ${PAIR} entry=${signal.entry} sl=${signal.sl.toFixed(2)} tp=${signal.tp.toFixed(2)}`);
   await notify(
-    `${signal.side === 'BUY' ? '📈' : '📉'} ${signal.side} ${PAIR}  [${st.name}]  #${data[0].id}\n` +
+    `${signal.side === 'BUY' ? '📈' : '📉'} ${signal.side} ${PAIR}  [${st.name}${signal.confidence ? ` ${signal.confidence}` : ''}]  #${data[0].id}\n` +
       `Entry: ${fmt(signal.entry)}\nSL: ${fmt(signal.sl)}\nTP: ${fmt(signal.tp)}\n(paper signal, not advice)`,
   );
 }
@@ -93,7 +96,7 @@ function connect(st: Strategy) {
   ws.on('message', (raw) => {
     const k = JSON.parse(raw.toString()).k;
     if (!k?.x) return; // only act when the candle CLOSES
-    const c: Candle = { openTime: k.t, high: Number(k.h), low: Number(k.l), close: Number(k.c) };
+    const c: Candle = { openTime: k.t, high: Number(k.h), low: Number(k.l), close: Number(k.c), volume: Number(k.v) };
     if (st.candles.at(-1)?.openTime === c.openTime) return;
     st.candles = [...st.candles, c].slice(-HISTORY);
     evaluateLatest(st).catch((e) => logError('evaluate', st.name, e));

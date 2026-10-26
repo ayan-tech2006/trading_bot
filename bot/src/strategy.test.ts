@@ -62,6 +62,13 @@ assert.equal(findSignals(candles, { strategy: 'pullback', param: 40, trendEma: 5
 assert.equal(findSignals(candles, { adxMin: 20 }).filter((s) => s.side === 'BUY').length, 1);
 assert.equal(findSignals(candles, { adxMin: 101 }).length, 0);
 
+// rsi30 (SignalCompare mirror): the V-bottom pushes RSI to ~0, the climb crosses back above 30 once → one BUY,
+// still under EMA50 → Medium. No volume → no signal (volume > 0 rule).
+const withVol: Candle[] = candles.map((c) => ({ ...c, volume: 1 }));
+const r30 = findSignals(withVol, { strategy: 'rsi30', slAtr: 1.5, tpAtr: 3 });
+assert.deepEqual(r30.map((s) => [s.side, s.confidence]), [['BUY', 'Medium']]);
+assert.equal(findSignals(candles, { strategy: 'rsi30' }).length, 0);
+
 const buy = { side: 'BUY' as const, sl: 90, tp: 120 };
 const sell = { side: 'SELL' as const, sl: 110, tp: 80 };
 assert.equal(outcome(buy, 100, 95), null);

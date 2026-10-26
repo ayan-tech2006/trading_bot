@@ -1,8 +1,9 @@
 // Shared by the live bot and the backtest, so both run exactly the same rules.
 import { ADX, ATR, BollingerBands, EMA, RSI } from 'technicalindicators';
 
-export type Candle = { openTime: number; high: number; low: number; close: number };
+export type Candle = { openTime: number; high: number; low: number; close: number; volume?: number };
 export type Side = 'BUY' | 'SELL';
+export type Confidence = 'High' | 'Medium' | 'Low';
 export type Signal = {
   openTime: number;
   side: Side;
@@ -12,6 +13,7 @@ export type Signal = {
   rsi: number;
   emaFast: number;
   emaSlow: number;
+  confidence?: Confidence; // rsi30 only, same score as freqtrade/strategies/SignalCompare.py
 };
 
 export const RULES = { emaFast: 9, emaSlow: 21, rsi: 14, atr: 14, slAtr: 1.5, tpAtr: 3 };
@@ -19,7 +21,7 @@ export const RULES = { emaFast: 9, emaSlow: 21, rsi: 14, atr: 14, slAtr: 1.5, tp
 // technicalindicators returns arrays shorter than the input; pad the front so index i == candle i
 const pad = (arr: number[], len: number) => [...Array<number>(len - arr.length).fill(NaN), ...arr];
 
-export type StrategyName = 'cross' | 'pullback' | 'breakout' | 'bollinger';
+export type StrategyName = 'cross' | 'pullback' | 'breakout' | 'bollinger' | 'rsi30';
 export type Options = {
   strategy?: StrategyName;
   /** pullback: RSI level, breakout: lookback candles, bollinger: std devs. Unused by cross. */
@@ -31,7 +33,7 @@ export type Options = {
   slAtr?: number;
   tpAtr?: number;
 };
-const DEFAULT_PARAM: Record<StrategyName, number> = { cross: 0, pullback: 40, breakout: 20, bollinger: 2 };
+const DEFAULT_PARAM: Record<StrategyName, number> = { cross: 0, pullback: 40, breakout: 20, bollinger: 2, rsi30: 0 };
 
 type Ind = { candles: Candle[]; close: number[]; fast: number[]; slow: number[]; rsi: number[] };
 // Each rule says BUY/SELL/null for candle i. Comparisons against NaN (indicator warm-up) are false, so no signal.
@@ -68,6 +70,9 @@ const RULE_FNS: Record<StrategyName, (ind: Ind, p: number) => (i: number) => Sid
       : close[i - 1] > upper[i - 1] && close[i] < upper[i] ? 'SELL'
       : null;
   },
+
+  // Mirror of freqtrade/strategies/SignalCompare.py: RSI(14) crosses above 30, volume > 0, long only
+  rsi30: ({ candles, rsi }) => (i) => (rsi[i - 1] < 30 && rsi[i] >= 30 && (candles[i].volume ?? 0) > 0 ? 'BUY' : null),
 };
 
 /** Every signal in the series. Candles must be closed and in time order. Defaults = the live bot's rules. */
@@ -83,6 +88,7 @@ export function findSignals(candles: Candle[], opts: Options = {}): Signal[] {
   const rsi = pad(RSI.calculate({ period: RULES.rsi, values: close }), n);
   const atr = pad(ATR.calculate({ period: RULES.atr, high, low, close }), n);
   const adx = adxMin ? pad(ADX.calculate({ period: 14, high, low, close }).map((a) => a.adx), n) : null;
+  const ema50 = strategy === 'rsi30' ? pad(EMA.calculate({ period: 50, values: close }), n) : null;
   const rule = RULE_FNS[strategy]({ candles, close, fast, slow, rsi }, opts.param ?? DEFAULT_PARAM[strategy]);
 
   const out: Signal[] = [];
@@ -103,6 +109,10 @@ export function findSignals(candles: Candle[], opts: Options = {}): Signal[] {
       rsi: rsi[i],
       emaFast: fast[i],
       emaSlow: slow[i],
+      ...(ema50 && {
+        // score = RSI cross (always 1 here) + close above EMA50 + volume > 0, as in SignalCompare.py
+        confidence: (['Low', 'Medium', 'High'] as const)[Number(close[i] > ema50[i]) + Number((candles[i].volume ?? 0) > 0)],
+      }),
     });
   }
   return out;
