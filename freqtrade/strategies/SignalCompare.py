@@ -145,10 +145,13 @@ class SignalCompare(IStrategy):
     ) -> bool:
         net = trade.calc_profit_ratio(rate) * 100
         reason = str(exit_reason).replace("_", " ")
-        result = {"tp_atr": "✅ *TP HIT*", "stop_loss": "🛑 *SL HIT*"}.get(exit_reason, f"⏹ *{reason}*")
+        result = {"tp_atr": "✅ *WIN* (TP hit)", "stop_loss": "❌ *LOSS* (SL hit)"}.get(
+            exit_reason, f"⏹ *CLOSED* ({reason})"
+        )
         label = {"tp_atr": "TP", "stop_loss": "SL"}.get(exit_reason, "exit")
         self.dp.send_msg(
-            f"📊 *{pair.split('/')[0]}* {result}\n\n"
+            f"{result}\n"
+            f"📊 *{pair.split('/')[0]}* {'SHORT' if trade.is_short else 'LONG'} / FUTURES\n\n"
             f"📌 Entry: {trade.open_rate:,.2f} → {label} {rate:,.2f}\n"
             f"💰 Net: {net:+.2f}% after fees\n\n"
             f"freqtrade · #{trade.id}",

@@ -164,7 +164,8 @@ async function resolve(s: OpenSignal) {
 
       log(`CLOSED #${s.id} ${s.strategy} ${result.toUpperCase()} net ${net.toFixed(2)}%`);
       await notify(
-        `📊 <b>${COIN}</b> ${result === 'win' ? '✅ <b>TP HIT</b>' : '🛑 <b>SL HIT</b>'}\n\n` +
+        `${result === 'win' ? '✅ <b>WIN</b> (TP hit)' : '❌ <b>LOSS</b> (SL hit)'}\n` +
+          `📊 <b>${COIN}</b> ${s.side === 'BUY' ? 'LONG' : 'SHORT'} / FUTURES\n\n` +
           `📌 Entry: ${fmt(s.entry)} → ${result === 'win' ? 'TP' : 'SL'} ${fmt(closePrice)}\n` +
           `💰 Net: ${net >= 0 ? '+' : ''}${net.toFixed(2)}% after fees\n\n` +
           `${s.strategy} · #${s.id}`,
