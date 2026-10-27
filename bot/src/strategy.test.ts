@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { findSignals, outcome, type Candle } from './strategy.js';
 import { fundingOk, takerOk, volumeOk } from './filters.js';
 import type { Kline } from './binance.js';
+import { breakeven, buildOdds, trendOf } from './odds.js';
+import { COST, simulate } from './sim.js';
 
 // ---- filters ----
 const k = (volume: number, takerBuyVolume = volume / 2): Kline => ({ openTime: 0, closeTime: 0, high: 1, low: 1, close: 1, volume, takerBuyVolume });
@@ -73,6 +75,22 @@ const peak: Candle[] = withVol.map((c) => ({ ...c, high: 200 - c.low, low: 200 -
 const r70 = findSignals(peak, { strategy: 'rsi30', slAtr: 1.5, tpAtr: 3 });
 assert.deepEqual(r70.map((s) => [s.side, s.confidence]), [['SELL', 'Medium']]);
 assert.ok(r70[0].tp < r70[0].entry && r70[0].entry < r70[0].sl, 'SELL: tp < entry < sl');
+
+// odds: every simulated trade with a defined EMA 200 trend lands in exactly one side+trend bucket
+const wave: Candle[] = [...Array(1200)].map((_, i) => {
+  const p = 100 + 10 * Math.sin(i / 25) + i * 0.01;
+  return { openTime: i, high: p + 1, low: p - 1, close: p, volume: 1 };
+});
+const waveOpts = { strategy: 'rsi30' as const, slAtr: 1.5, tpAtr: 3 };
+const waveSignals = findSignals(wave, waveOpts);
+const waveTrend = trendOf(wave);
+const expected = simulate(wave, waveSignals).trades.filter((t) => waveTrend(t.entryTime)).length;
+const odds = buildOdds(wave, waveOpts);
+assert.ok(expected > 0);
+assert.equal([...odds.values()].reduce((a, o) => a + o.n, 0), expected);
+for (const o of odds.values()) assert.ok(o.wins <= o.n);
+// TP twice the SL distance, no costs → 1/3; costs push it up
+assert.ok(Math.abs(breakeven({ entry: 100, sl: 99, tp: 102 }) - (0.01 + COST) / 0.03) < 1e-12);
 
 const buy = { side: 'BUY' as const, sl: 90, tp: 120 };
 const sell = { side: 'SELL' as const, sl: 110, tp: 80 };

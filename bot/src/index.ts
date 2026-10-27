@@ -3,15 +3,16 @@ import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { klines, openInterest } from './binance.js';
-import { netPnl } from './sim.js';
-import { findSignals, outcome, type Candle, type Options } from './strategy.js';
+import { breakeven, buildOdds, oddsKey, trendOf, type Odds } from './odds.js';
+import { history, netPnl } from './sim.js';
+import { findSignals, outcome, type Candle, type Options, type Signal } from './strategy.js';
 
 const PAIR = process.env.PAIR ?? 'BTCUSDT';
 const HISTORY = 500; // enough candles for the indicators to settle (breakout needs 100, ADX ~30)
 const WS_URL = process.env.BINANCE_WS ?? 'wss://stream.binance.com:9443/ws';
 
 // Each live strategy gets its own candle stream. Settings are fixed; don't tune them after seeing live results.
-const STRATEGIES: { name: string; timeframe: '15m' | '1h' | '4h'; opts: Options; candles: Candle[] }[] = [
+const STRATEGIES: { name: string; timeframe: '15m' | '1h' | '4h'; opts: Options; candles: Candle[]; odds?: Odds }[] = [
   { name: 'cross_15m', timeframe: '15m', opts: {}, candles: [] }, // original EMA 9/21 rules
   { name: 'breakout_4h', timeframe: '4h', opts: { strategy: 'breakout', param: 100, adxMin: 25, slAtr: 1.5, tpAtr: 2 }, candles: [] },
   // same rules as freqtrade/strategies/SignalCompare.py, to cross-check against Freqtrade's dry-run
@@ -19,6 +20,7 @@ const STRATEGIES: { name: string; timeframe: '15m' | '1h' | '4h'; opts: Options;
 ];
 type Strategy = (typeof STRATEGIES)[number];
 const TF_MS: Record<string, number> = { '15m': 15 * 60_000, '1h': 60 * 60_000, '4h': 4 * 60 * 60_000 };
+const YEAR = 365 * 24 * 60 * 60_000;
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in bot/.env');
@@ -45,15 +47,27 @@ async function notify(text: string) {
   }
 }
 
-/** Live paper record of a strategy so far, as a line for the signal card ('' if Supabase fails). */
-async function record(name: string) {
-  // shortcut: default 1000-row limit, fine until a strategy has 1000 closed signals
-  const { data, error } = await db.from('signals').select('status, net_pnl_pct').eq('strategy', name).in('status', ['win', 'loss']);
-  if (error) return '';
-  if (!data.length) return '📈 <b>Win rate:</b> no closed signals yet\n';
-  const wins = data.filter((s) => s.status === 'win').length;
-  const net = data.reduce((a, s) => a + (s.net_pnl_pct ?? 0), 0);
-  return `📈 <b>Win rate:</b> ${Math.round((wins / data.length) * 100)}% (${wins}W / ${data.length - wins}L, net ${net >= 0 ? '+' : ''}${net.toFixed(2)}%)\n`;
+/** This trade's win chance from similar past signals, as a line for the signal card ('' until the table is loaded). */
+function chance(st: Strategy, signal: Signal) {
+  const trend = trendOf(st.candles)(signal.openTime);
+  const o = trend && st.odds?.get(oddsKey(signal.side, trend));
+  if (!o) return '';
+  const be = `needs ${Math.round(breakeven(signal) * 100)}% to break even`;
+  if (o.n < 20) return `📈 <b>Win chance:</b> too few similar past signals (${o.n}) · ${be}\n`;
+  const setup = `${signal.side === 'BUY' ? 'LONG' : 'SHORT'}, price ${trend === 'up' ? 'above' : 'below'} EMA 200`;
+  return `📈 <b>Win chance:</b> ${Math.round((o.wins / o.n) * 100)}% · ${be}\n<i>${o.n} similar past signals (${setup}), last 2 years</i>\n`;
+}
+
+/** Rebuild each strategy's 2-year win-chance table, one strategy at a time to keep memory low. */
+async function refreshOdds() {
+  for (const st of STRATEGIES) {
+    try {
+      st.odds = buildOdds(await history(PAIR, st.timeframe, Date.now() - 2 * YEAR), st.opts);
+      log(`${st.name}: win-chance table ${[...st.odds].map(([k, o]) => `${k} ${o.wins}/${o.n}`).join(', ')}`);
+    } catch (e) {
+      logError('odds', st.name, e);
+    }
+  }
 }
 
 /** Run the strategy on the newest closed candle and save a signal if it fires there. */
@@ -89,7 +103,7 @@ async function evaluateLatest(st: Strategy) {
       `${signal.side === 'BUY' ? '🟢 <b>LONG / FUTURES</b>' : '🔴 <b>SHORT / FUTURES</b>'}\n` +
       `🎯 <b>Target:</b> TP → ${fmt(signal.tp)}\n` +
       `🛑 <b>Stop Loss:</b> → ${fmt(signal.sl)}\n` +
-      (await record(st.name)) +
+      chance(st, signal) +
       `\n` +
       `${st.name}${signal.confidence ? ` · ${signal.confidence}` : ''} · #${data[0].id} · paper signal, not advice`,
   );
@@ -193,5 +207,7 @@ async function trackOutcomes() {
 
 log(`starting ${PAIR} paper bot (no trading): ${STRATEGIES.map((s) => s.name).join(', ')}`);
 for (const st of STRATEGIES) connect(st);
+refreshOdds();
+setInterval(refreshOdds, 24 * 60 * 60_000);
 trackOutcomes().catch((e) => logError('tracker', e));
 setInterval(() => trackOutcomes().catch((e) => logError('tracker', e)), 60_000);

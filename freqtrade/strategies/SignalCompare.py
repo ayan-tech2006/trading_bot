@@ -130,15 +130,6 @@ class SignalCompare(IStrategy):
             else ""
         )
         side = "🔴 *SHORT / FUTURES*" if trade.is_short else "🟢 *LONG / FUTURES*"
-        closed = Trade.get_trades_proxy(pair=pair, is_open=False)
-        wins = sum(1 for t in closed if (t.close_profit or 0) > 0)
-        net = sum((t.close_profit or 0) for t in closed) * 100
-        levels += (
-            f"📈 *Win rate:* {round(wins / len(closed) * 100)}% "
-            f"({wins}W / {len(closed) - wins}L, net {net:+.2f}%)\n"
-            if closed
-            else "📈 *Win rate:* no closed trades yet\n"
-        )
         # Telegram Markdown (v1): *bold*; no underscores in the text, they would break parsing
         self.dp.send_msg(
             f"📊 *{pair.split('/')[0]}*\n\n"
