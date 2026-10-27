@@ -27,6 +27,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persi
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 const logError = (...a: unknown[]) => console.error(new Date().toISOString(), 'ERROR', ...a);
 const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+const COIN = PAIR.replace(/USDT$/, '');
 
 /** Telegram alert. Skipped when not configured; never throws, so a Telegram outage can't stop the bot. */
 async function notify(text: string) {
@@ -36,7 +37,7 @@ async function notify(text: string) {
     const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text }),
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
     });
     if (!res.ok) logError('telegram', res.status, await res.text());
   } catch (e) {
@@ -72,8 +73,12 @@ async function evaluateLatest(st: Strategy) {
 
   log(`SIGNAL #${data[0].id} ${st.name} ${signal.side} ${PAIR} entry=${signal.entry} sl=${signal.sl.toFixed(2)} tp=${signal.tp.toFixed(2)}`);
   await notify(
-    `${signal.side === 'BUY' ? '📈' : '📉'} ${signal.side} ${PAIR}  [${st.name}${signal.confidence ? ` ${signal.confidence}` : ''}]  #${data[0].id}\n` +
-      `Entry: ${fmt(signal.entry)}\nSL: ${fmt(signal.sl)}\nTP: ${fmt(signal.tp)}\n(paper signal, not advice)`,
+    `📊 <b>${COIN}</b>\n\n` +
+      `📌 <b>Entry:</b> ${fmt(signal.entry)} (CMP)\n` +
+      `${signal.side === 'BUY' ? '🟢 <b>LONG / SPOT SETUP</b>' : '🔴 <b>SHORT SETUP</b>'}\n` +
+      `🎯 <b>Target:</b> TP → ${fmt(signal.tp)}\n` +
+      `🛑 <b>Stop Loss:</b> → ${fmt(signal.sl)}\n\n` +
+      `${st.name}${signal.confidence ? ` · ${signal.confidence}` : ''} · #${data[0].id} · paper signal, not advice`,
   );
 }
 
@@ -132,9 +137,10 @@ async function resolve(s: OpenSignal) {
 
       log(`CLOSED #${s.id} ${s.strategy} ${result.toUpperCase()} net ${net.toFixed(2)}%`);
       await notify(
-        `${result === 'win' ? '✅ WIN' : '❌ LOSS'}  #${s.id} ${s.side} ${PAIR}  [${s.strategy}]\n` +
-          `Entry: ${fmt(s.entry)} → ${result === 'win' ? 'TP' : 'SL'} ${fmt(closePrice)}\n` +
-          `Net: ${net >= 0 ? '+' : ''}${net.toFixed(2)}% after fees`,
+        `📊 <b>${COIN}</b> ${result === 'win' ? '✅ <b>TP HIT</b>' : '🛑 <b>SL HIT</b>'}\n\n` +
+          `📌 Entry: ${fmt(s.entry)} → ${result === 'win' ? 'TP' : 'SL'} ${fmt(closePrice)}\n` +
+          `💰 Net: ${net >= 0 ? '+' : ''}${net.toFixed(2)}% after fees\n\n` +
+          `${s.strategy} · #${s.id}`,
       );
       return;
     }

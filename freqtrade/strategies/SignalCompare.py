@@ -119,14 +119,17 @@ class SignalCompare(IStrategy):
             return
         atr = self._signal_atr(pair, trade)
         levels = (
-            f"\nSL: {trade.open_rate - self.ATR_SL_MULT * atr:,.2f}"
-            f"\nTP: {trade.open_rate + self.ATR_TP_MULT * atr:,.2f}"
+            f"🎯 *Target:* TP → {trade.open_rate + self.ATR_TP_MULT * atr:,.2f}\n"
+            f"🛑 *Stop Loss:* → {trade.open_rate - self.ATR_SL_MULT * atr:,.2f}\n"
             if atr is not None
             else ""
         )
+        # Telegram Markdown (v1): *bold*; no underscores in the text, they would break parsing
         self.dp.send_msg(
-            f"📈 BUY {pair}  [freqtrade {trade.enter_tag or ''}]  #{trade.id}\n"
-            f"Entry: {trade.open_rate:,.2f}{levels}\n(paper signal, not advice)",
+            f"📊 *{pair.split('/')[0]}*\n\n"
+            f"📌 *Entry:* {trade.open_rate:,.2f}\n"
+            f"🟢 *LONG / SPOT SETUP*\n{levels}\n"
+            f"freqtrade · {trade.enter_tag or ''} · #{trade.id} · paper signal, not advice",
             always_send=True,
         )
 
@@ -135,12 +138,14 @@ class SignalCompare(IStrategy):
         current_time, **kwargs,
     ) -> bool:
         net = trade.calc_profit_ratio(rate) * 100
-        result = {"tp_atr": "✅ WIN", "stop_loss": "❌ LOSS"}.get(exit_reason, f"⏹ {exit_reason}")
+        reason = str(exit_reason).replace("_", " ")
+        result = {"tp_atr": "✅ *TP HIT*", "stop_loss": "🛑 *SL HIT*"}.get(exit_reason, f"⏹ *{reason}*")
         label = {"tp_atr": "TP", "stop_loss": "SL"}.get(exit_reason, "exit")
         self.dp.send_msg(
-            f"{result}  #{trade.id} BUY {pair}  [freqtrade]\n"
-            f"Entry: {trade.open_rate:,.2f} → {label} {rate:,.2f}\n"
-            f"Net: {net:+.2f}% after fees",
+            f"📊 *{pair.split('/')[0]}* {result}\n\n"
+            f"📌 Entry: {trade.open_rate:,.2f} → {label} {rate:,.2f}\n"
+            f"💰 Net: {net:+.2f}% after fees\n\n"
+            f"freqtrade · #{trade.id}",
             always_send=True,
         )
         return True
