@@ -68,6 +68,11 @@ const withVol: Candle[] = candles.map((c) => ({ ...c, volume: 1 }));
 const r30 = findSignals(withVol, { strategy: 'rsi30', slAtr: 1.5, tpAtr: 3 });
 assert.deepEqual(r30.map((s) => [s.side, s.confidence]), [['BUY', 'Medium']]);
 assert.equal(findSignals(candles, { strategy: 'rsi30' }).length, 0);
+// mirrored (peak instead of V-bottom): RSI drops back through 70 once → one SELL, still above EMA50 → Medium
+const peak: Candle[] = withVol.map((c) => ({ ...c, high: 200 - c.low, low: 200 - c.high, close: 200 - c.close }));
+const r70 = findSignals(peak, { strategy: 'rsi30', slAtr: 1.5, tpAtr: 3 });
+assert.deepEqual(r70.map((s) => [s.side, s.confidence]), [['SELL', 'Medium']]);
+assert.ok(r70[0].tp < r70[0].entry && r70[0].entry < r70[0].sl, 'SELL: tp < entry < sl');
 
 const buy = { side: 'BUY' as const, sl: 90, tp: 120 };
 const sell = { side: 'SELL' as const, sl: 110, tp: 80 };

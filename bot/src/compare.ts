@@ -29,7 +29,7 @@ function ftRows(): Row[] {
   if (sqlite) {
     const db = new DatabaseSync(sqlite, { readOnly: true });
     trades = db
-      .prepare("select open_date, close_date, enter_tag, exit_reason, close_profit as profit from trades where pair = 'BTC/USDT' order by open_date")
+      .prepare("select open_date, close_date, enter_tag, exit_reason, close_profit as profit from trades where pair like 'BTC/USDT%' order by open_date")
       .all() as FtTrade[];
   } else if (json) {
     const bt = JSON.parse(readFileSync(json, 'utf8'));

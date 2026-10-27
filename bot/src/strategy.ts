@@ -71,8 +71,12 @@ const RULE_FNS: Record<StrategyName, (ind: Ind, p: number) => (i: number) => Sid
       : null;
   },
 
-  // Mirror of freqtrade/strategies/SignalCompare.py: RSI(14) crosses above 30, volume > 0, long only
-  rsi30: ({ candles, rsi }) => (i) => (rsi[i - 1] < 30 && rsi[i] >= 30 && (candles[i].volume ?? 0) > 0 ? 'BUY' : null),
+  // Mirror of freqtrade/strategies/SignalCompare.py: RSI(14) crosses up through 30 → BUY, down through 70 → SELL, volume > 0
+  rsi30: ({ candles, rsi }) => (i) =>
+    !((candles[i].volume ?? 0) > 0) ? null
+    : rsi[i - 1] < 30 && rsi[i] >= 30 ? 'BUY'
+    : rsi[i - 1] > 70 && rsi[i] <= 70 ? 'SELL'
+    : null,
 };
 
 /** Every signal in the series. Candles must be closed and in time order. Defaults = the live bot's rules. */
@@ -110,8 +114,10 @@ export function findSignals(candles: Candle[], opts: Options = {}): Signal[] {
       emaFast: fast[i],
       emaSlow: slow[i],
       ...(ema50 && {
-        // score = RSI cross (always 1 here) + close above EMA50 + volume > 0, as in SignalCompare.py
-        confidence: (['Low', 'Medium', 'High'] as const)[Number(close[i] > ema50[i]) + Number((candles[i].volume ?? 0) > 0)],
+        // score = RSI cross (always 1 here) + close on the trade's side of EMA50 + volume > 0, as in SignalCompare.py
+        confidence: (['Low', 'Medium', 'High'] as const)[
+          Number(side === 'BUY' ? close[i] > ema50[i] : close[i] < ema50[i]) + Number((candles[i].volume ?? 0) > 0)
+        ],
       }),
     });
   }

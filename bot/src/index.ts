@@ -45,6 +45,17 @@ async function notify(text: string) {
   }
 }
 
+/** Live paper record of a strategy so far, as a line for the signal card ('' if Supabase fails). */
+async function record(name: string) {
+  // shortcut: default 1000-row limit, fine until a strategy has 1000 closed signals
+  const { data, error } = await db.from('signals').select('status, net_pnl_pct').eq('strategy', name).in('status', ['win', 'loss']);
+  if (error) return '';
+  if (!data.length) return '📈 <b>Win rate:</b> no closed signals yet\n';
+  const wins = data.filter((s) => s.status === 'win').length;
+  const net = data.reduce((a, s) => a + (s.net_pnl_pct ?? 0), 0);
+  return `📈 <b>Win rate:</b> ${Math.round((wins / data.length) * 100)}% (${wins}W / ${data.length - wins}L, net ${net >= 0 ? '+' : ''}${net.toFixed(2)}%)\n`;
+}
+
 /** Run the strategy on the newest closed candle and save a signal if it fires there. */
 async function evaluateLatest(st: Strategy) {
   const last = st.candles.at(-1);
@@ -75,9 +86,11 @@ async function evaluateLatest(st: Strategy) {
   await notify(
     `📊 <b>${COIN}</b>\n\n` +
       `📌 <b>Entry:</b> ${fmt(signal.entry)} (CMP)\n` +
-      `${signal.side === 'BUY' ? '🟢 <b>LONG / SPOT SETUP</b>' : '🔴 <b>SHORT SETUP</b>'}\n` +
+      `${signal.side === 'BUY' ? '🟢 <b>LONG / FUTURES</b>' : '🔴 <b>SHORT / FUTURES</b>'}\n` +
       `🎯 <b>Target:</b> TP → ${fmt(signal.tp)}\n` +
-      `🛑 <b>Stop Loss:</b> → ${fmt(signal.sl)}\n\n` +
+      `🛑 <b>Stop Loss:</b> → ${fmt(signal.sl)}\n` +
+      (await record(st.name)) +
+      `\n` +
       `${st.name}${signal.confidence ? ` · ${signal.confidence}` : ''} · #${data[0].id} · paper signal, not advice`,
   );
 }
