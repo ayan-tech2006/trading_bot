@@ -112,3 +112,35 @@ class SignalCompare(IStrategy):
         if current_rate >= trade.open_rate + self.ATR_TP_MULT * atr:
             return "tp_atr"
         return None
+
+    # --- Telegram: same format as the TS bot (default Freqtrade messages are off in the config) --
+    def order_filled(self, pair: str, trade: Trade, order, current_time, **kwargs) -> None:
+        if order.ft_order_side != trade.entry_side:
+            return
+        atr = self._signal_atr(pair, trade)
+        levels = (
+            f"\nSL: {trade.open_rate - self.ATR_SL_MULT * atr:,.2f}"
+            f"\nTP: {trade.open_rate + self.ATR_TP_MULT * atr:,.2f}"
+            if atr is not None
+            else ""
+        )
+        self.dp.send_msg(
+            f"📈 BUY {pair}  [freqtrade {trade.enter_tag or ''}]  #{trade.id}\n"
+            f"Entry: {trade.open_rate:,.2f}{levels}\n(paper signal, not advice)",
+            always_send=True,
+        )
+
+    def confirm_trade_exit(
+        self, pair: str, trade: Trade, order_type, amount, rate, time_in_force, exit_reason,
+        current_time, **kwargs,
+    ) -> bool:
+        net = trade.calc_profit_ratio(rate) * 100
+        result = {"tp_atr": "✅ WIN", "stop_loss": "❌ LOSS"}.get(exit_reason, f"⏹ {exit_reason}")
+        label = {"tp_atr": "TP", "stop_loss": "SL"}.get(exit_reason, "exit")
+        self.dp.send_msg(
+            f"{result}  #{trade.id} BUY {pair}  [freqtrade]\n"
+            f"Entry: {trade.open_rate:,.2f} → {label} {rate:,.2f}\n"
+            f"Net: {net:+.2f}% after fees",
+            always_send=True,
+        )
+        return True

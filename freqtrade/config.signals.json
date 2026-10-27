@@ -27,11 +27,17 @@
     "token": "",
     "chat_id": "",
     "notification_settings": {
-      "entry": "on",
-      "entry_fill": "on",
-      "exit_fill": "on",
-      "status": "silent",
-      "warning": "on"
+      "status": "off",
+      "warning": "off",
+      "startup": "off",
+      "entry": "off",
+      "entry_fill": "off",
+      "entry_cancel": "off",
+      "exit": "off",
+      "exit_fill": "off",
+      "exit_cancel": "off",
+      "protection_trigger": "off",
+      "protection_trigger_global": "off"
     }
   },
   "bot_name": "freqtrade-signal-compare",
