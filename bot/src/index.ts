@@ -19,6 +19,8 @@ const STRATEGIES: { name: string; timeframe: '15m' | '1h' | '4h'; opts: Options;
   { name: 'rsi30_1h', timeframe: '1h', opts: { strategy: 'rsi30', slAtr: 1.5, tpAtr: 3 }, candles: [] },
 ];
 type Strategy = (typeof STRATEGIES)[number];
+// Still saved to Supabase and the dashboard, but no Telegram alerts: loses to fees on 15m (needs ~62% wins, gets ~30%)
+const MUTED = new Set(['cross_15m']);
 const TF_MS: Record<string, number> = { '15m': 15 * 60_000, '1h': 60 * 60_000, '4h': 4 * 60 * 60_000 };
 const YEAR = 365 * 24 * 60 * 60_000;
 
@@ -97,6 +99,7 @@ async function evaluateLatest(st: Strategy) {
   if (!data.length) return; // already saved (e.g. reconnect within the same candle): don't alert twice
 
   log(`SIGNAL #${data[0].id} ${st.name} ${signal.side} ${PAIR} entry=${signal.entry} sl=${signal.sl.toFixed(2)} tp=${signal.tp.toFixed(2)}`);
+  if (MUTED.has(st.name)) return;
   await notify(
     `📊 <b>${COIN}</b>\n\n` +
       `📌 <b>Entry:</b> ${fmt(signal.entry)} (CMP)\n` +
@@ -163,6 +166,7 @@ async function resolve(s: OpenSignal) {
       if (!data.length) return;
 
       log(`CLOSED #${s.id} ${s.strategy} ${result.toUpperCase()} net ${net.toFixed(2)}%`);
+      if (MUTED.has(s.strategy ?? '')) return;
       await notify(
         `${result === 'win' ? '✅ <b>WIN</b> (TP hit)' : '❌ <b>LOSS</b> (SL hit)'}\n` +
           `📊 <b>${COIN}</b> ${s.side === 'BUY' ? 'LONG' : 'SHORT'} / FUTURES\n\n` +
